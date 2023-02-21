@@ -27,6 +27,7 @@ package main
 //
 import "C"
 import (
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -40,6 +41,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/quic-go/quic-go"
 )
 
 type Peer struct {
@@ -309,7 +312,7 @@ func (h *teleportSource) sourceLoop() {
 	defer ticker.Stop()
 
 	var (
-		c         net.Conn
+		c         quic.Connection
 		connMutex sync.Mutex
 		shutdown  bool
 	)
@@ -371,7 +374,11 @@ func (h *teleportSource) sourceLoop() {
 			if c != nil {
 				c.Close()
 			}
-			c, err = net.DialTimeout("tcp", service.Address+":"+strconv.Itoa(service.Payload.Port), 100*time.Millisecond)
+			tlsConf := &tls.Config{
+				InsecureSkipVerify: true,
+				NextProtos:         []string{"teleport-quic"},
+			}
+			c, err = quic.DialAddr(service.Address+":"+strconv.Itoa(service.Payload.Port), tlsConf, nil)
 			connMutex.Unlock()
 
 			if err != nil {
@@ -380,6 +387,8 @@ func (h *teleportSource) sourceLoop() {
 				}
 				continue
 			}
+
+			stream, err := c.AcceptUniStream(context.Background())
 
 			h.audio.timestamp = 0
 			h.audio.samples_per_sec = 48000
@@ -420,7 +429,7 @@ func (h *teleportSource) sourceLoop() {
 
 				p.Buffer = make([]byte, p.Header.Size)
 
-				_, err := io.ReadFull(c, p.Buffer)
+				_, err := io.ReadFull(stream, p.Buffer)
 				if err != nil {
 					break
 				}

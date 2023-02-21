@@ -25,27 +25,41 @@ package main
 //
 import "C"
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"net"
 	"strconv"
 	"sync"
+
+	"github.com/quic-go/quic-go"
 )
 
 type Sender struct {
 	sync.Mutex
 	sync.WaitGroup
-	conns map[net.Conn]chan []byte
+	conns map[quic.Connection]chan []byte
 }
 
-func (s *Sender) SenderAdd(c net.Conn) {
+func (s *Sender) SenderAdd(c quic.Connection) {
 	s.Lock()
 	defer s.Unlock()
 
 	if s.conns == nil {
-		s.conns = make(map[net.Conn]chan []byte)
+		s.conns = make(map[quic.Connection]chan []byte)
 	}
 
 	ch := make(chan []byte, 1000)
 	s.conns[c] = ch
+
+	/* todo: split video and audio streams */
+	stream, err := c.OpenUniStreamSync(context.Background())
+	if err != nil {
+		panic(err)
+	}
 
 	s.Add(1)
 	go func() {
@@ -53,7 +67,7 @@ func (s *Sender) SenderAdd(c net.Conn) {
 		defer c.Close()
 
 		for b := range ch {
-			_, err := c.Write(b)
+			_, err := stream.Write(b)
 			if err != nil {
 				s.Lock()
 				close(ch)

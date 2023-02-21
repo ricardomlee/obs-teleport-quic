@@ -31,6 +31,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/quic-go/quic-go"
 )
 
 type teleportOutput struct {
@@ -198,7 +200,7 @@ func (h *teleportOutput) outputLoop() {
 	listenPort := int(C.obs_data_get_int(settings, port_str))
 	C.obs_data_release(settings)
 
-	l, err := net.Listen("tcp", ":"+strconv.Itoa(listenPort))
+	l, err := quic.ListenAddr("localhost:"+strconv.Itoa(listenPort), generateTLSConfig(), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -209,7 +211,7 @@ func (h *teleportOutput) outputLoop() {
 		defer h.Done()
 
 		for {
-			c, err := l.Accept()
+			c, err := l.Accept(context.Background())
 			if err != nil {
 				break
 			}
@@ -229,4 +231,28 @@ func (h *teleportOutput) outputLoop() {
 	defer h.StopAnnouncer()
 
 	<-h.done
+}
+
+// Setup a bare-bones TLS config for the server
+func generateTLSConfig() *tls.Config {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		panic(err)
+	}
+	template := x509.Certificate{SerialNumber: big.NewInt(1)}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		panic(err)
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		NextProtos:   []string{"teleport-quic"},
+	}
 }
